@@ -79,3 +79,24 @@ const dataLayer = L.geoJSON(data, {
 });
 
 dataLayer.addTo(map);
+
+var legend = L.control({position: 'bottomright'});
+
+legend.onAdd = function (map) {
+    var div = L.DomUtil.create('div', 'info legend');
+    var categories = ['Republican', 'Democrat'];
+    var colors = ['#ff0101', '#007ef3'];
+
+    div.innerHTML += '<h2>Map Legend</h2>';
+
+    // Loop through categories to generate HTML rows with color blocks
+    for (var i = 0; i < categories.length; i++) {
+        div.innerHTML += 
+            '<i style="background:' + colors[i] + '"></i> ' + 
+            categories[i] + '<br>';
+    }
+
+    return div;
+};
+
+legend.addTo(map);
