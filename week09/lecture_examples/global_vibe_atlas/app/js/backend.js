@@ -15,25 +15,25 @@
  */
 
 // TODO (Part 2): Import Firebase modules from Google CDN
-// import { initializeApp } from 'https://www.gstatic.com/firebasejs/12.5.0/firebase-app.js';
-// import {
-//   getFirestore,
-//   collection,
-//   addDoc,
-//   getDocs,
-//   query,
-//   where,
-//   onSnapshot,
-//   doc,
-//   updateDoc,
-//   increment,
-// } from 'https://www.gstatic.com/firebasejs/12.5.0/firebase-firestore.js';
-// import { firebaseConfig } from './config.js';
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/12.5.0/firebase-app.js';
+import {
+  getFirestore,
+  collection,
+  addDoc,
+  getDocs,
+  query,
+  where,
+  onSnapshot,
+  doc,
+  updateDoc,
+  increment,
+  serverTimestamp,
+} from 'https://www.gstatic.com/firebasejs/12.5.0/firebase-firestore.js';
+import { firebaseConfig } from './config.js';
 
-// TODO (Part 2): Initialize Firebase and Firestore database
-// const app = initializeApp(firebaseConfig);
-// const db = getFirestore(app);
-
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+const COLLECTION_NAME = 'vibe_pins';
 const STORAGE_KEY = 'global-vibe-atlas-pins';
 
 // Initial sample seed pins so students see global points on the globe immediately
@@ -124,11 +124,11 @@ export const Backend = {
     // Listen for filter changes from the dropdown
     events.addEventListener('filter-changed', async (e) => {
       Backend.currentFilter = e.detail?.filter || 'all';
-      await Backend.loadPins();
+      Backend.subscribeToPins(Backend.currentFilter);
     });
 
     // Initial load
-    await Backend.loadPins();
+    Backend.subscribeToPins(initialFilter);
   },
 
   /**
@@ -138,27 +138,19 @@ export const Backend = {
    * TODO (Part 2): Replace this with Firestore `addDoc(collection(db, 'vibe_pins'), pinData)`.
    */
   async savePin(pinData) {
-    console.log('[backend-starter] Saving pin to localStorage:', pinData);
+  console.log('Writing pin to Cloud Firestore...', pinData);
+  const collRef = collection(db, COLLECTION_NAME);
+  const docRef = await addDoc(collRef, {
+    ...pinData,
+    submittedAt: serverTimestamp(),
+  });
 
-    // Create a client-side record with an ID
-    const newPin = {
-      id: `pin_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
-      ...pinData,
-    };
-
-    const pins = Backend._getLocalPins();
-    pins.unshift(newPin);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(pins));
-
-    // Dispatch success to close the form and show confirmation
-    Backend.events.dispatchEvent(new CustomEvent('save-pin:success', {
-      detail: { pin: newPin },
-    }));
-
-    // Refresh rendered pins
-    await Backend.loadPins();
-    return newPin;
-  },
+  const savedPin = { id: docRef.id, ...pinData };
+  Backend.events.dispatchEvent(new CustomEvent('save-pin:success', {
+    detail: { pin: savedPin },
+  }));
+  return savedPin;
+},
 
   /**
    * Adds an endorsement (+1) to a pin.
@@ -167,15 +159,11 @@ export const Backend = {
    * TODO (Part 3 stretch): Use Firestore `updateDoc` with `increment(delta)`.
    */
   async endorsePin(pinId, delta = 1) {
-    console.log(`[backend-starter] Endorsing pin ${pinId} (+${delta})`);
-    const pins = Backend._getLocalPins();
-    const pin = pins.find(p => p.id === pinId);
-    if (pin) {
-      pin.endorsements = (pin.endorsements || 1) + delta;
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(pins));
-      await Backend.loadPins();
-    }
-  },
+  const pinRef = doc(db, COLLECTION_NAME, pinId);
+  await updateDoc(pinRef, {
+    endorsements: increment(delta),
+  });
+},
 
   /**
    * Loads pins and dispatches `pins-updated` on the event bus.
@@ -196,6 +184,33 @@ export const Backend = {
       detail: { pins },
     }));
   },
+
+  subscribeToPins(filter = 'all') {
+  if (typeof Backend.unsubscribeSnapshot === 'function') {
+    Backend.unsubscribeSnapshot();
+  }
+
+  const collRef = collection(db, COLLECTION_NAME);
+  let targetQuery = collRef;
+    if (filter && filter !== 'all') {
+      targetQuery = query(collRef, where('vibeCategory', '==', filter));
+    }
+
+  // onSnapshot calls your callback immediately with current data,
+  // and then pushes a new snapshot every time ANYONE in the room adds/edits a doc!
+  Backend.unsubscribeSnapshot = onSnapshot(targetQuery, (snapshot) => {
+    const pins = [];
+    snapshot.forEach((docSnap) => {
+      pins.push({ id: docSnap.id, ...docSnap.data() });
+    });
+
+    pins.sort((a, b) => new Date(b.submittedAt || 0) - new Date(a.submittedAt || 0));
+
+    Backend.events.dispatchEvent(new CustomEvent('pins-updated', {
+      detail: { pins },
+    }));
+  });
+}, 
 
   /**
    * Internal helper: retrieves pins array from localStorage (or seeds initial sample pins).
